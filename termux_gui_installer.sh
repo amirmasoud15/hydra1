@@ -161,8 +161,8 @@ install_core_packages() {
 install_android_tools() {
     draw_box "🤖 Installing Android Tools" \
 "Installing ADB and Fastboot:" \
-"• android-tools - ADB & Fastboot" \
-"• scrcpy - Screen mirroring tool" \
+"• android-tools" \
+"• scrcpy" \
 "This enables phone connectivity..." "$BLUE"
     
     loading_animation "Installing Android Tools" 20

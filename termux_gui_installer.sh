@@ -136,9 +136,7 @@ install_core_packages() {
 "• git - Version control" \
 "• wget - File downloader" \
 "• python - Programming language" \
-"• python-pip - Python package manager" \
-"• openssh - SSH client/server" \
-"• curl - Data transfer tool" "$PURPLE"
+"• python-pip - Python package manager" "$PURPLE"
     
     local packages="git wget python python-pip openssh curl unzip"
     local total=7

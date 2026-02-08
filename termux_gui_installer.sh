@@ -4,13 +4,11 @@
 # Project: Termux Scrcpy X11 Controller
 # Description: Advanced ADB & Scrcpy automation tool for Termux users.
 #              Stream android screen over TCP/IP to Termux-X11.
-# License: MIT
-# Version: 2.0.0 Pro
+# Version: 3.2.0 Pro (Stable Edition)
 # ==============================================================================
 
 # --- [ Configuration & Globals ] ---
 CONFIG_FILE="$HOME/.scrcpy_config"
-TERMUX_X11_PKG="termux-x11-nightly" # Or termux-x11-repo depending on source
 LOG_FILE="$HOME/scrcpy_manager.log"
 
 # --- [ Colors & Styling ] ---
@@ -25,12 +23,10 @@ NC='\033[0m' # No Color
 
 # --- [ Helper Functions ] ---
 
-# Trap Ctrl+C to exit gracefully
 trap cleanup SIGINT
 
 cleanup() {
     echo -e "\n${RED}[!] Force exit detected. Cleaning up...${NC}"
-    # Kill background jobs if any (optional specific kills)
     exit 1
 }
 
@@ -64,13 +60,14 @@ spinner() {
 header() {
     clear
     echo -e "${CYAN}${BOLD}"
-    echo "  ╔════════════════════════════════════════════════╗"
-    echo "  ║      TERMUX SCRCPY X11 CONTROLLER PRO          ║"
-    echo "  ╚════════════════════════════════════════════════╝"
+    echo "  ██╗  ██╗██╗   ██╗██████╗ ██████╗  █████╗ "
+    echo "  ██║  ██║╚██╗ ██╔╝██╔══██╗██╔══██╗██╔══██╗"
+    echo "  ███████║ ╚████╔╝ ██║  ██║██████╔╝███████║"
+    echo "  ██╔══██║  ╚██╔╝  ██║  ██║██╔══██╗██╔══██║"
+    echo "  ██║  ██║   ██║   ██████╔╝██║  ██║██║  ██║"
+    echo "  ╚═╝  ╚═╝   ╚═╝   ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${PURPLE}Author:${NC} GitHub Community"
     echo -e "  ${PURPLE}System:${NC} $(uname -o) | ${PURPLE}X11 Display:${NC} ${DISPLAY:-:1}"
-    echo -e "  ${PURPLE}Log:${NC} $LOG_FILE"
     echo "----------------------------------------------------"
 }
 
@@ -83,20 +80,16 @@ check_and_install() {
         pkg install "$pkg_name" -y >/dev/null 2>&1 &
         spinner $!
         log SUCCESS "$pkg_name installed."
-    else
-        echo -e "${GREEN}✔${NC} $pkg_name is already installed."
     fi
 }
 
 install_dependencies() {
     header
-    log INFO "Checking repositories..."
+    log INFO "Configuring repositories..."
+    pkg install termux-x11-repo -y >/dev/null 2>&1
+    pkg update -y
     
-    # Check repos
-    pkg update -y >/dev/null 2>&1
-    
-    # List of required packages
-    local dependencies=("termux-x11-repo" "tur-repo" "android-tools" "scrcpy" "x11-repo" "virglrenderer-android" "pulseaudio" "xterm" "termux-x11-nightly" )
+    local dependencies=("android-tools" "scrcpy" "termux-x11" "pulseaudio" "x11-repo" "tur-repo" "virglrenderer-android")
     
     for dep in "${dependencies[@]}"; do
         check_and_install "$dep"
@@ -122,9 +115,12 @@ setup_x11() {
     if ! pgrep -x "termux-x11" > /dev/null; then
         log INFO "Starting X11 Server (:1)..."
         termux-x11 :1 &
-        sleep 2
-    else
-        log INFO "X11 Server is already running."
+        sleep 3
+    fi
+    
+    if ! pgrep -x "pulseaudio" > /dev/null; then
+        log INFO "Starting Audio Server..."
+        pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1
     fi
 }
 
@@ -133,86 +129,74 @@ connect_device() {
     load_config
     
     echo -e "${BOLD}Setup Wireless Connection${NC}"
-    echo -e "Make sure 'Wireless Debugging' is ON in Developer Options.\n"
-    
     local default_ip=${LAST_IP:-"192.168.1.100"}
     local default_port=${LAST_PORT:-"5555"}
     
     read -p "$(echo -e "${YELLOW}Target IP [${default_ip}]: ${NC}")" INPUT_IP
     INPUT_IP=${INPUT_IP:-$default_ip}
-    
     read -p "$(echo -e "${YELLOW}Port [${default_port}]: ${NC}")" INPUT_PORT
     INPUT_PORT=${INPUT_PORT:-$default_port}
     
-    # Save for next time
     save_config "$INPUT_IP" "$INPUT_PORT"
     
-    log INFO "Attempting connection to $INPUT_IP:$INPUT_PORT..."
-    adb disconnect >/dev/null 2>&1
-    adb connect "$INPUT_IP:$INPUT_PORT" >/dev/null 2>&1 &
+    log INFO "Resetting ADB and connecting to $INPUT_IP:$INPUT_PORT..."
+    adb kill-server >/dev/null 2>&1
+    adb start-server >/dev/null 2>&1
+    
+    # Run connect in background to prevent hanging
+    adb connect "$INPUT_IP:$INPUT_PORT" > /dev/null 2>&1 &
     spinner $!
     
-    if adb devices | grep -q "$INPUT_IP:$INPUT_PORT"; then
-        log SUCCESS "Connected to $INPUT_IP"
+    sleep 3
+    local check_status=$(adb devices | grep "$INPUT_IP:$INPUT_PORT")
+    
+    if echo "$check_status" | grep -q "device$"; then
+        log SUCCESS "Connection established in background!"
+    elif echo "$check_status" | grep -q "unauthorized"; then
+        log WARN "Device unauthorized! Check phone screen."
     else
-        log ERROR "Connection failed! Check IP/Port or Pair code."
+        log ERROR "Connection failed. Verify IP/Port."
     fi
     read -n 1 -s -r -p "Press any key to return..."
 }
 
 start_stream() {
     header
-    setup_x11
     
-    if ! adb get-state 1>/dev/null 2>&1; then
-        log ERROR "No device connected! Please connect via ADB first."
+    if ! adb devices | grep -v "List" | grep -q "device$"; then
+        log ERROR "No active device! Please connect first (Option 2)."
         read -n 1 -s -r -p "Press any key to return..."
         return
     fi
+
+    setup_x11
     
     echo -e "${BOLD}Select Stream Quality:${NC}"
-    echo "1) ${GREEN}Performance${NC} (Low Res, High FPS, Low Latency)"
-    echo "2) ${YELLOW}Balanced${NC} (720p, Standard Bitrate)"
-    echo "3) ${RED}High Quality${NC} (1080p, High Bitrate)"
-    echo "4) ${CYAN}Custom${NC} (Edit arguments manually)"
-    read -p "Option [1-4]: " quality
+    echo "1) ${GREEN}Performance${NC} (High FPS)"
+    echo "2) ${YELLOW}Balanced${NC} (720p)"
+    echo "3) ${RED}Quality${NC} (1080p)"
+    read -p "Option [1-3]: " quality
     
-    local cmd_base="scrcpy --always-on-top --keyboard=uhid"
+    local sc_args="--always-on-top --keyboard=uhid --mouse=uhid --power-off-on-close"
     
     case $quality in
-        1) 
-            # Super low latency
-            cmd_args="-m 800 --video-bit-rate 2M --max-fps 60 --no-audio" 
-            ;;
-        2) 
-            # Balanced
-            cmd_args="-m 1024 --video-bit-rate 4M --max-fps 30" 
-            ;;
-        3) 
-            # High
-            cmd_args="-m 1920 --video-bit-rate 8M --max-fps 60" 
-            ;;
-        4)
-            read -p "Enter scrcpy args: " cmd_args
-            ;;
-        *) 
-            cmd_args="-m 1024 --video-bit-rate 4M" 
-            ;;
+        1) sc_args="$sc_args -m 800 --video-bit-rate 2M --max-fps 60" ;;
+        2) sc_args="$sc_args -m 1280 --video-bit-rate 4M --max-fps 30" ;;
+        3) sc_args="$sc_args -m 1920 --video-bit-rate 10M --max-fps 60" ;;
+        *) sc_args="$sc_args -m 1024" ;;
     esac
     
     log INFO "Launching Scrcpy..."
-    echo -e "${CYAN}> $cmd_base $cmd_args${NC}"
-    
-    # Launching
-    $cmd_base $cmd_args
+    scrcpy $sc_args
     
     log INFO "Stream session ended."
     read -n 1 -s -r -p "Press any key to return..."
 }
 
 disconnect_all() {
-    adb disconnect
-    log SUCCESS "All ADB connections killed."
+    adb disconnect >/dev/null 2>&1
+    adb kill-server >/dev/null 2>&1
+    log SUCCESS "All ADB connections reset."
     sleep 1
 }
 
@@ -220,18 +204,24 @@ disconnect_all() {
 
 while true; do
     header
-    # Check connection status for dashboard
-    local device_status=$(adb devices | grep -w "device" | awk '{print $1}')
-    if [ -z "$device_status" ]; then
-        echo -e "Status: ${RED}Disconnected${NC}"
+    
+    # Advanced Status Check for Dashboard
+    DEVICE_LINE=$(adb devices | grep -v "List" | grep -v "^$" | head -n 1)
+    if [ -z "$DEVICE_LINE" ]; then
+        STATUS_STR="${RED}OFFLINE${NC}"
+    elif echo "$DEVICE_LINE" | grep -q "unauthorized"; then
+        STATUS_STR="${YELLOW}UNAUTHORIZED${NC}"
     else
-        echo -e "Status: ${GREEN}Connected ($device_status)${NC}"
+        DEV_ID=$(echo "$DEVICE_LINE" | awk '{print $1}')
+        STATUS_STR="${GREEN}CONNECTED ($DEV_ID)${NC}"
     fi
+    
+    echo -e " Status: $STATUS_STR"
     echo "----------------------------------------------------"
     echo -e " ${BOLD}1.${NC} 📦 Check/Install Dependencies"
-    echo -e " ${BOLD}2.${NC} 📡 Connect via TCP/IP"
-    echo -e " ${BOLD}3.${NC} 📱 Start Scrcpy (Stream)"
-    echo -e " ${BOLD}4.${NC} 🔌 Disconnect All"
+    echo -e " ${BOLD}2.${NC} 📡 Connect via Wireless ADB"
+    echo -e " ${BOLD}3.${NC} 📱 Start Scrcpy Stream"
+    echo -e " ${BOLD}4.${NC} 🔌 Reset ADB Connections"
     echo -e " ${BOLD}5.${NC} 🚪 Exit"
     echo "----------------------------------------------------"
     read -p "Select option: " main_choice
@@ -242,6 +232,6 @@ while true; do
         3) start_stream ;;
         4) disconnect_all ;;
         5) echo -e "${CYAN}Good bye!${NC}"; exit 0 ;;
-        *) echo "Invalid option" ; sleep 1 ;;
+        *) sleep 0.5 ;;
     esac
 done

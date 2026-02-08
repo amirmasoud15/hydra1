@@ -5,12 +5,12 @@
 # Description: Advanced ADB & Scrcpy automation tool for Termux users.
 #              Stream android screen over TCP/IP to Termux-X11.
 # License: MIT
-# Version: 2.0.0 Pro
+# Version: 2.1.0 Pro
 # ==============================================================================
 
 # --- [ Configuration & Globals ] ---
 CONFIG_FILE="$HOME/.scrcpy_config"
-TERMUX_X11_PKG="termux-x11-nightly" # Or termux-x11-repo depending on source
+TERMUX_X11_PKG="termux-x11" 
 LOG_FILE="$HOME/scrcpy_manager.log"
 
 # --- [ Colors & Styling ] ---
@@ -30,7 +30,6 @@ trap cleanup SIGINT
 
 cleanup() {
     echo -e "\n${RED}[!] Force exit detected. Cleaning up...${NC}"
-    # Kill background jobs if any (optional specific kills)
     exit 1
 }
 
@@ -90,13 +89,14 @@ check_and_install() {
 
 install_dependencies() {
     header
-    log INFO "Checking repositories..."
+    log INFO "Configuring repositories..."
     
-    # Check repos
+    # اضافه کردن مخزن X11 به صورت اختصاصی برای اطمینان از وجود دستور termux-x11
+    pkg install termux-x11-repo -y >/dev/null 2>&1
     pkg update -y >/dev/null 2>&1
     
-    # List of required packages
-    local dependencies=("termux-x11-repo" "tur-repo" "android-tools" "scrcpy" "x11-repo" "virglrenderer-android" "pulseaudio" "xterm")
+    # لیست پکیج‌های مورد نیاز با نام دقیق برای مخازن ترموکس
+    local dependencies=("termux-x11-repo" "tur-repo" "android-tools" "scrcpy" "termux-x11" "virglrenderer-android" "pulseaudio" "xterm")
     
     for dep in "${dependencies[@]}"; do
         check_and_install "$dep"
@@ -119,10 +119,15 @@ load_config() {
 
 setup_x11() {
     export DISPLAY=:1
+    if ! command -v termux-x11 &> /dev/null; then
+        log ERROR "Command 'termux-x11' not found. Please run Option 1 first."
+        return 1
+    fi
+
     if ! pgrep -x "termux-x11" > /dev/null; then
         log INFO "Starting X11 Server (:1)..."
         termux-x11 :1 &
-        sleep 2
+        sleep 3
     else
         log INFO "X11 Server is already running."
     fi
@@ -144,7 +149,6 @@ connect_device() {
     read -p "$(echo -e "${YELLOW}Port [${default_port}]: ${NC}")" INPUT_PORT
     INPUT_PORT=${INPUT_PORT:-$default_port}
     
-    # Save for next time
     save_config "$INPUT_IP" "$INPUT_PORT"
     
     log INFO "Attempting connection to $INPUT_IP:$INPUT_PORT..."
@@ -162,7 +166,10 @@ connect_device() {
 
 start_stream() {
     header
-    setup_x11
+    if ! setup_x11; then
+        read -n 1 -s -r -p "Press any key to return..."
+        return
+    fi
     
     if ! adb get-state 1>/dev/null 2>&1; then
         log ERROR "No device connected! Please connect via ADB first."
@@ -181,15 +188,12 @@ start_stream() {
     
     case $quality in
         1) 
-            # Super low latency
             cmd_args="-m 800 --video-bit-rate 2M --max-fps 60 --no-audio" 
             ;;
         2) 
-            # Balanced
             cmd_args="-m 1024 --video-bit-rate 4M --max-fps 30" 
             ;;
         3) 
-            # High
             cmd_args="-m 1920 --video-bit-rate 8M --max-fps 60" 
             ;;
         4)
@@ -203,7 +207,6 @@ start_stream() {
     log INFO "Launching Scrcpy..."
     echo -e "${CYAN}> $cmd_base $cmd_args${NC}"
     
-    # Launching
     $cmd_base $cmd_args
     
     log INFO "Stream session ended."
@@ -220,7 +223,6 @@ disconnect_all() {
 
 while true; do
     header
-    # Check connection status for dashboard
     local device_status=$(adb devices | grep -w "device" | awk '{print $1}')
     if [ -z "$device_status" ]; then
         echo -e "Status: ${RED}Disconnected${NC}"
